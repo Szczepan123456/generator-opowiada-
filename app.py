@@ -9,9 +9,11 @@ from openai import OpenAI
 st.set_page_config(page_title="📖 Generator Opowieści", layout="centered")
 st.title("📖 Generator Opowieści dla Dzieci i Dorosłych")
 
-# Sidebar z API i wyborem odbiorcy
+# Sidebar – klucz API i ustawienia
 with st.sidebar:
-    api_key = st.text_input("🔑 Wprowadź swój OpenAI API Key:", type="password", value=st.secrets["openai"]["api_key"])
+    st.markdown("### 🔑 Wprowadź swój OpenAI API Key")
+    api_key = st.text_input("Klucz API:", type="password")
+
     audience = st.radio("Wybierz odbiorcę opowieści:", ["Dziecko", "Dorosły"])
 
     categories = (
@@ -22,9 +24,9 @@ with st.sidebar:
     category = st.selectbox("Wybierz kategorię opowieści:", categories)
 
     if st.button("🔄 Resetuj wszystko"):
-        for key in ["title", "summary", "story", "image_url", "step", "topic", "story_id"]:
-            st.session_state.pop(key, None)
-        st.rerun()
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.experimental_rerun()
 
 # Wymagany klucz API
 if not api_key:
@@ -34,15 +36,14 @@ if not api_key:
 # Inicjalizacja klientów
 client = OpenAI(api_key=api_key)
 
+# Qdrant: dane dostępowe trzymasz TYLKO w Streamlit Secrets (nie są nigdzie automatycznie używane)
 qdrant_client = QdrantClient(
     url=st.secrets["qdrant"]["url"],
     api_key=st.secrets["qdrant"]["api_key"]
 )
 
-# Tworzenie kolekcji, jeśli nie istnieje
-try:
-    qdrant_client.get_collection("stories")
-except Exception:
+# Tworzenie kolekcji w Qdrant (jeśli nie istnieje)
+if "stories" not in [col.name for col in qdrant_client.get_collections().collections]:
     qdrant_client.recreate_collection(
         collection_name="stories",
         vectors_config={"size": 1536, "distance": "Cosine"}
@@ -54,7 +55,7 @@ for key in ["title", "summary", "story", "image_url", "step", "topic", "story_id
 if not st.session_state.step:
     st.session_state.step = "start"
 
-# Generowanie tytułu i streszczenia
+# Funkcje generujące
 def generate_title_and_summary_from_topic(topic):
     prompt = f"Napisz tytuł i streszczenie na temat: {topic}\nFormat:\nTytuł: ...\nStreszczenie: ..."
     response = client.chat.completions.create(
@@ -186,26 +187,24 @@ elif st.session_state.step == "story_generated":
     with col1:
         if st.button("🎨 Generuj ilustrację"):
             if not st.session_state.get("story_id"):
-                st.error("Brakuje ID opowieści. Wygeneruj najpierw opowieść.")
-                st.stop()
-
-            with st.spinner("Generowanie ilustracji..."):
-                prompt_img = f"Ilustracja do opowieści: {st.session_state.title}"
-                url = generate_image(prompt_img)
-                image_id = str(uuid4())
-                add_image_to_qdrant(image_id, st.session_state.story_id, url, prompt_img)
-                st.session_state.image_url = url
-            st.rerun()
-    with col2:
-        if st.session_state.image_url:
-            if st.button("Nie akceptuję ilustracji, proszę o nową"):
-                with st.spinner("Generowanie nowej ilustracji..."):
-                    prompt_img = f"Ilustracja do opowieści: {st.session_state.title}"
+                st.warning("Najpierw wygeneruj opowieść.")
+            else:
+                with st.spinner("Generowanie ilustracji..."):
+                    prompt_img = f"Ilustracja w stylu bajkowym do opowieści pt. '{st.session_state.title}'. Krótkie streszczenie: {st.session_state.summary}"
                     url = generate_image(prompt_img)
                     image_id = str(uuid4())
                     add_image_to_qdrant(image_id, st.session_state.story_id, url, prompt_img)
                     st.session_state.image_url = url
                 st.rerun()
+    with col2:
+        if st.session_state.image_url and st.button("Nie akceptuję ilustracji, proszę o nową"):
+            with st.spinner("Generowanie nowej ilustracji..."):
+                prompt_img = f"Ilustracja w stylu bajkowym do opowieści pt. '{st.session_state.title}'. Krótkie streszczenie: {st.session_state.summary}"
+                url = generate_image(prompt_img)
+                image_id = str(uuid4())
+                add_image_to_qdrant(image_id, st.session_state.story_id, url, prompt_img)
+                st.session_state.image_url = url
+            st.rerun()
 
     if st.session_state.image_url:
         st.image(st.session_state.image_url, caption="Ilustracja do opowieści")
